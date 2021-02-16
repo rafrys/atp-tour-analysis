@@ -1,0 +1,1216 @@
+---
+title: "ATP Data Analysis"
+description: "Looking for the best tennis player: How can we measure greatness in tennis?"
+author: 
+- name: "Rafał Rysiejko "
+- name: "Contribution: Michał Sałach"
+date: February 10, 2021
+output: radix::radix_article
+---
+## Introduction
+In the project, we have used the data on the ATP (Association of Tennis Professionals) matches, tournaments, and players, available on the JeffSackmann/tennis_atp 
+[repository on GitHub](https://github.com/JeffSackmann/tennis_atp). We aimed to search for
+the best tennis player. We track difficulties in comparing players who dominated in tennis in
+different periods and proposed various ways in which one may try to compare them.
+
+
+```{r r setup, include = F}
+
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+#### libraries ####
+
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(gridExtra)
+library(RColorBrewer)
+library(viridis)
+library(magrittr)
+library(circlize)
+library(cowplot)
+library(ggalt)
+library(fmsb)
+library(ggrepel)
+library(ggbump)
+
+#### loading data ####
+
+data <- readRDS("../Data/data_atp.rds")  
+data_extra <- readRDS("../Data/data_extra.rds")
+rankings <- readRDS("../Data/rankings.rds") 
+players <- readRDS("../Data/players.rds") 
+```
+
+## Data description and preprocessing
+
+We have imported the data from the [repository](https://github.com/JeffSackmann/tennis_atp) on January 1, 2021. For that moment, the latest data was for December 28, 2020, so the whole season
+2020 was included. There are 3 main data sets:
+
+- **data_atp.rds**
+
+- **rankings.rds**
+
+- **players.rds**
+
+*data_atp.rds* was used to produce the fourth data set, **data_extra.rds**, which extends data_atp by additional features (mostly matches statistics that can be extracted from the score, such as the number of sets or tie-breaks won by both opponents). All the pre-processing can be found and reproduced with the use of the *data_preparation.R* script, appended to the project.
+
+*data_atp.rds* is a data set for matches. Originally, it contained 49 attributes, e.g. names of 
+the opponents (`winner_name`, `loser_name`), information about a tournament (`touney_name`,
+`tourney_level`, `tourney_date`, `surface`), and round (`round`), score (`score`), match 
+duration (`minutes`), and some more detailed information on the players, such as their height
+(`winner_ht`) and age at the moment of the match (`winner_age`), as well as details of the 
+match: e.g. number of aces (`w_ace`), double fouls (`w_df`) or break points saved (`w_bpSaved`)^[Similarily for the loser: `loser_ht`, `loser_age`, `l_ace`, `l_df`, `l_bpSaved`.].
+The complete description of the original data can be found in the *matches_data_dictionary.txt*
+file, appended to the project.
+
+The data in the *data_atp* file spans the years 1968 to 2020. I retrieved it on January 1, 2021, 
+21:05, CET. The preprocessing of this data involved mostly formatting dates, renaming levels associated with tourney levels, and adding the dates of birth for the opponents (which made for 51 attributes in total in this data set). We have used the *players* data set for the latter task, retrieved on January 3, 2021, at 21:54, CET. *players* contains the players’ names and IDs and their birth date, dominant hand, and country codes. The data set was not useful outside of the preprocessing stage.
+
+
+Much of the data preparation was devoted to processing the *rankings* data set, retrieved on January 3,
+2021, 21:40, CET. The *rankings.rds* contains 5 variables: `ranking_date`, `rank`, `player_id`. `points` and `player` (name). Players' names were added based on the IDs, using the *players* data set. They have formatted the dates and restricted the data set to the top 100 players for each ranking update, as the project aimed to investigate only the best players. We have found a couple of mistakes in the data set (players who rank for a particular date was an obvious typo).^[All the pre-processing described here can be found in the *data_preparation.R* file.]
+It is worth mentioning that the data for *rankings* starts from 1973-08-27, and the ranking points
+are presented only from 1990-01-01.
+
+
+*data_extra* file has been produced basing on the *data_atp* data set, and extends the 51 attributes
+present in *data_atp* by another 35, for example `w_SetsWon`/`l_SetsWon` (number of sets won in match),
+`w_SvGmsLost`/`l_SvGmsLost` (number of service games lost in match) and `w_tbWon`/`l_tbWon` (number of 
+tie-breaks won in match). A full guide to this data set can be found in the *data_preprocessing.R* file.
+
+*data_atp.rds* (and *data_extra.rds*) contains 177,642 records, meaning that there 177,642
+singles male professional tennis matches we have record of, from
+``r data %>% filter(tourney_level != "Davis Cup") %>% select(tourney_name) %>% distinct(tourney_name) %>% nrow() ``
+tournaments (excluding Davis Cup^[Davis Cup is the main national competition in tennis. During the year there are multiple tourneys on continental and global levels that are part of Davis Cup competition. We often treat victories in Davis Cup separately from individual victoris, especially because winnig every match in Davis Cup does not imply that a player won the tournament, as the final result depends on his teamates' performence.]).
+*rankings.rds*, after significant reduction (to the top players only) has 180,886 data points, and 
+the *players* data set contains 6,433 unique players.
+
+
+## The best in rankings
+
+
+Ranking data seems to be an obvious first choice for finding out which players stand out the most in overall greatness. The source of ranking points is players' performance in the
+tournaments. Nowadays (from 2009), except for long-lasting fame and significant financial 
+reward, the most prestigious tournaments, Grand Slam Tournaments^[There are four: Australian Open, Roland Garros (French Open), Wimbledon, and US Open. This, thankfully, has not changed in the recent history of tennis.], grant their winners 2,000 ranking points. A runner-up receives 1,200 points, and the semi-finalists - 720. The second most important event in the male tennis calendar is the ATP Finals, in which the best 8 players of an ending season compete for up to 1,500 additional points. The third tier in the hierarchy are the Masters 1000 tournaments, in which the winners get 1,000 ranking points, runners-up - 600, and semi-finalists - 360. Masters 1000 are a major source of ranking points for the best players, as there are (for 2021) 9 such events during the year^[A calendar year and a season may be equaled in tennis, as a season usually starts in January with the Australian Open, and ends with the ATP Finals in November.]. 
+There are also tournaments included in the 500 and 250 ATP Series (500 or 250 ranking points for the winner), but they are not that frequently played by the players on the very top of the 
+ranking. As for today, the points are the basis for players' ranking position, and their expiry
+time is one year^[Meaning that in normal circumstances - when the calendar of tournaments does not change, a player will be rewarded with *x* points for a tournament *a* until the next edition of the tournament *a*.].
+Crucially for our analysis, a set of tournaments played by players at different times changes.
+Except from the immutable 4 Grand Slam tournaments, makeup and the number of events played on each level vary over decades. Therefore, rankings provide a way to abstract how exactly players make up for their dominance and focus only on how they compare to the others,  which played simultaneously, in possibly similar circumstances. In other words, we will be looking here for the players who dominated the rankings to the highest degree.
+
+
+
+```{r r plot1, message = F, warning = F, fig.height = 6.5}
+
+#### Plot 1: Best players by rankings ####
+
+plot1_rankings <- function(rankings = rankings, activePlayers, numberOfPlayers = 10, palette = "Dark2"){
+  
+  colors <- brewer.pal(n = 4, name = palette)
+  
+  # Subset top players by total time as no 1
+  longest_top1 <- rankings %>% 
+    filter(rank==1) %>% 
+    mutate(rank_no = rleid(ranking_date),
+           on_top_streak = as.numeric((lead(ranking_date)-ranking_date)/365)) %>%
+    group_by(player) %>% 
+    mutate(on_top = sum(on_top_streak, na.rm = T)) %>% 
+    slice_head(n = 1) %>% 
+    ungroup() %>% 
+    select(first_no_1 = ranking_date, player, on_top) %>% 
+    mutate(first_no_1 = year(first_no_1))
+  
+  # Subset top players by time as no 1 in a row
+  longest_streak_top1 <- rankings %>% 
+    filter(rank==1) %>% 
+    mutate(on_top_streak = as.numeric((lead(ranking_date)-ranking_date)/365)) %>%
+    group_by(rleid(player)) %>% 
+    mutate(on_top_streak = sum(on_top_streak, na.rm = T)) %>% 
+    slice_head(n = 1) %>% 
+    ungroup() %>% 
+    group_by(player) %>% 
+    slice_max(on_top_streak) %>% 
+    ungroup() %>% 
+    select(on_top_from = ranking_date, player, on_top_streak)
+  
+  # Subset top players by total time in top 3
+  top3time <- rankings %>% 
+    filter(rank<4) %>% 
+    mutate(rank_no = rleid(ranking_date),
+           in_top_3_streak = as.numeric((lead(ranking_date, n = 3)-ranking_date)/365)) %>%
+    group_by(player) %>% 
+    mutate(in_top_3 = sum(in_top_3_streak, na.rm = T)) %>% 
+    slice_head(n = 1) %>% 
+    ungroup() %>% 
+    select(first_time_in_top_3 = ranking_date, rank, player, in_top_3)
+  
+  # Subset top players by total time in top 10
+  top10time <- rankings %>% 
+    filter(rank<11) %>% 
+    mutate(rank_no = rleid(ranking_date),
+           in_top_10_streak = as.numeric((lead(ranking_date, n = 10)-ranking_date)/365)) %>%
+    group_by(player) %>% 
+    mutate(in_top_10 = sum(in_top_10_streak, na.rm = T)) %>% 
+    slice_head(n = 1) %>% 
+    ungroup() %>% 
+    select(first_time_in_top_10 = ranking_date, rank, player, in_top_10)
+  
+  longest_top1_best <- max(longest_top1$on_top)
+  longest_streak_top1_best <- max(longest_streak_top1$on_top_streak)
+  top10time_best <- max(top10time$in_top_10)
+  top3time_best <- max(top3time$in_top_3)
+  
+  # Prepare a final data set
+  longest_top1 %>% 
+    select(player, first_no_1, on_top) %>% 
+    left_join(longest_streak_top1 %>% select(player, on_top_streak), by = "player") %>% 
+    left_join(top10time %>% select(player,in_top_10), by = "player") %>% 
+    left_join(top3time %>% select(player,in_top_3), by = "player") %>%
+    # mark active players with * (and Connors with **)
+    mutate(player = lapply(player, FUN = function(x) {if (x %in% activePlayers) paste0(x, "*\nfirst in ", 
+                           longest_top1%>%select(first_no_1)%>%filter(player == x)) else if (x=="Jimmy Connors")
+                           paste0(x, "**\nfirst in ", longest_top1%>%select(first_no_1)%>%filter(player == x)) else paste0(x, 
+                           "\nfirst in ", longest_top1%>%select(first_no_1)%>%filter(player == x))})) %>% 
+    mutate(player = factor(player, levels = unique(player))) -> all_time_best_ranking 
+  
+  # prepare a limit of players to display
+  playersToDisplay <- all_time_best_ranking %>% slice_max(on_top, n = numberOfPlayers) %>% 
+    select(player) %>% pull()
+  
+  all_time_best_ranking %>% 
+    ggplot(aes(y = reorder(player, on_top))) +
+    ## add vertical lines representing absolute records in each category
+    geom_vline(xintercept = longest_streak_top1_best, linetype = "dashed", color = colors[1], size = 1) +
+    geom_vline(xintercept = longest_top1_best, linetype = "dashed", color = colors[2], size = 1) +
+    geom_vline(xintercept = top3time_best, linetype = "dashed", color = colors[3], size = 1) +
+    geom_vline(xintercept = top10time_best, linetype = "dashed", color = colors[4], size = 1) +
+    
+    ## add labels for records in each category
+    geom_text(aes(x = longest_streak_top1_best-0.5, label = paste(round(longest_streak_top1_best, 2), "years"), y = 3.3),
+              colour = colors[1], angle = 90) +
+    geom_text(aes(x = longest_top1_best-0.5, label = paste(round(longest_top1_best, 2), "years"), y = 2),
+              colour = colors[2], angle = 90) +
+    geom_text(aes(x = top3time_best-0.5, label = paste(round(top3time_best, 2), "years"), y = 3.3),
+              colour = colors[3], angle = 90) +
+    geom_text(aes(x = top10time_best-0.5, label = paste(round(top10time_best, 2), "years"), y = 1.5),
+              colour = colors[4], angle = 90) +
+    
+    ## add points and labels for each category
+    geom_point(aes(x = on_top_streak, color = "color1"), alpha = 0.75, size = 8) +
+    geom_text(aes(x = on_top_streak, label = order(order(on_top_streak, decreasing = T))),
+              size = 3, color = "white", vjust = .3) +
+    
+    geom_point(aes(x = in_top_3,  color = "color3"), alpha = 0.75, size = 8) +
+    geom_text(aes(x = in_top_3, label = order(order(in_top_3, decreasing = T))),
+              size = 3, color = "white", vjust = .3) +
+    
+    geom_point(aes(x = on_top, color = "color2"), alpha = 0.75, size = 8) +
+    geom_text(aes(x = on_top, label = order(order(on_top, decreasing = T))),
+              size = 3, color = "white", vjust = .3) +
+    
+    geom_point(aes(x = in_top_10, color = "color4"), alpha = 0.75, size = 8) +
+    geom_text(aes(x = in_top_10, label = order(order(in_top_10, decreasing = T))),
+              size = 3, color = "white", vjust = .3) +
+    
+    labs(title = "Years spent in the top of the ranking", subtitle = "for top 10 players by total time as world number 1",
+         x = "Number of years", y = "", caption = "Data from 27/08/1973 till the end of the 2020 season.\nActive players are marked with *.\nJimmy Connors in 1st with respect to being no. 1 in a row, however the ranking\ndata is scarce for the late 1970s, when he was ranked as the top player.") +
+    scale_color_manual(values = c("color1" = colors[1], "color2" = colors[2], "color3" = colors[3], "color4" = colors[4]), 
+                       labels = c("number 1 in a row", "number 1 in total", "in top 3", "in top 10")) + 
+    scale_y_discrete(limits = rev(playersToDisplay)) +
+    scale_x_continuous(breaks = seq(0,20,2), labels = seq(0,20,2)) +
+    theme_minimal() +
+    theme(legend.position = "bottom", legend.title = element_blank())
+  
+}
+
+activePlayers <- c("Roger Federer", "Rafael Nadal", "Novak Djokovic", "Andy Murray")
+plot1_rankings(rankings, activePlayers, numberOfPlayers = 10, palette = "Dark2")
+```
+
+The graph show top 10 players with respect to the time they spent as world number 1. The
+leader in this category is Novak Djokovic, who has been listed on top of the ATP rankings for the
+first time in 2011. Djokovic's over six years as the ranking's leader is more than e.g., time that Bjorn Borg spent overall in the world top 3 (Borg's 9th place in that category). However, there are 3 other players than Djokovic who come close to his record, occupying more than five years as the world number 1 - they are Federer, Sampras and Connors. Federer, just like Djokovic and Nadal (6th with respect to the orange category), are still active players, all three currently in the top 10^[As for February 2021.], so their records are not a closed book.
+
+Interestingly though, in the other three categories taken into account, the leaders are different. Roger Federer is an undisputed leader with respect to time spent in the top 3 and top 10. With over 18 years in the top 10 and 16 in the top 3 overall, he is over two years ahead of the second player in these two sub rankings, Rafael Nadal. Federer is also second with respect to time spent on top of the ranking in a row, where the leader, with over five years, is Jimmy Connors.
+
+Clearly, no one player beats all the others in his rankings records. Federer is either
+first or second with respect to every category shown, which provides a strong argument for his 
+advantage. However, it may be argued that the overall time spent in the top 3 or top 10 is not equally important as time spent on top of the ranking. In general, it seems that a relatively small group of 6 players stands out from the rest, all categories considered. None of the top 6 players on the list, so Djokovic, Federer, Sampras, Connors, Lendl and Nadal, fell out of top 10 in either category, and the top 3 in each category always recruits from these six players.
+
+The players' domination over their rivals is reflected in the time they spent on top
+of the ATP rankings and the way they reached the top and eventually left it. From this viewpoint, Djokovic may be allowed merit for "often" advancing from top 10 to top 3, and then relatively
+"often"^["Often" should be here understood as: whenever a player, here Djokovic, is listed in top 10, he is most probably also listed in top 3.] to world number 1. A similar pattern can be seen for Sampras, who, however, spent, in general, less time in top 3 and as top 1 than Djokovic. Federer, and especially Nadal, both have great records as players listed in top 10 and top 3, but they spent comparably more time than Djokovic at other ranking positions than 1.
+
+
+---
+
+There are, however, also some issues connected to the ATP rankings that render the conclusions we would like to draw dubious. As we mentioned, rankings provide a way to see how the players compare, regardless, e.g., what and even how many particular tournaments there were at the time of their prime. However, the rankings methodology also changes, and the rankings data is not consistent for the older records. The methodology’s impact may be in the differences in points rewarded to the players for particular results at the tournaments, additional opportunities for scoring points (like ATP Finals), or withdrawing points for particular events (it is the case with Summer Olympics and Davis Cup from 2016).  Also, an evolving set of tournaments played on different surfaces causes players, who usually favor some surfaces and tournaments over some other, to have varying opportunities. First, in the next graph, we will focus on a more straightforward problem: the frequency of rankings updates. 
+
+```{r r plot2}
+
+#### Plot 2: No. 1 streaks vs how many times the ranking was updated ####
+
+plot2_streaks <- function(rankings = rankings, palette = "Dark2"){
+
+  longest_streak_top1 <- rankings %>% 
+    filter(rank==1) %>% 
+    mutate(on_top_streak = as.numeric((lead(ranking_date)-ranking_date)/365)) %>%
+    group_by(rleid(player)) %>% 
+    mutate(on_top_streak = sum(on_top_streak, na.rm = T)) %>% 
+    slice_head(n = 1) %>% 
+    ungroup() %>% 
+    select(on_top_from = ranking_date, player, on_top_streak) %>% 
+    arrange(desc(on_top_streak)) %>% 
+    mutate(on_top_to = on_top_from+(365*on_top_streak-1),
+           rank = rleid(on_top_streak)) %>% 
+    slice_max(on_top_streak, n = 10)
+
+  rankings %>% 
+    filter(rank==1) %>% 
+    select(ranking_date) %>% 
+    group_by(year = year(ranking_date)) %>% 
+    summarise(no_of_ranking_updates = n()) %>% 
+    ungroup() %>% 
+    ggplot(aes(x = ymd(year, truncated = 2L), y = no_of_ranking_updates)) +
+    geom_line(size = 1.1) +
+    labs(title = "Top 10 best streaks as world number 1",
+         subtitle = "vs number of ranking updates throughout the years",
+         x = "Years", y = "Ranking updates") +
+    scale_y_continuous(breaks = c(seq(0,50,10),53), labels = c(seq(0,50,10),53)) +
+    # scale_x_date(date_breaks = "5 years", date_labels = "%Y") +    
+    scale_x_date(breaks = ymd(c(1973, seq(1980, 2020, 5)), truncated = 2L), date_labels = "%Y") +
+    geom_rect(data = longest_streak_top1, aes(ymin = -Inf, ymax = Inf,
+                                      xmin = on_top_from,
+                                      xmax = on_top_to,
+                                      fill = player),
+              alpha = 0.3, inherit.aes = F, show.legend = F) +
+    geom_text(data = longest_streak_top1, aes(label = paste0(player, " - ", round(on_top_streak, 2), " years"),
+                                               x = on_top_from+120, y = 30, color = player), 
+              size = 4, angle = 90, show.legend = F) +
+    geom_point(data = longest_streak_top1, aes(x = (on_top_from+(on_top_to-on_top_from)/2), y = 55,
+                                               color = player), size = 8, alpha = 0.75, show.legend = F) +
+    geom_text(data = longest_streak_top1, aes(label = rank, x = (on_top_from+(on_top_to-on_top_from)/2),
+                                              y = 55), size = 3, color = "white", vjust = .3) +
+    scale_fill_brewer(palette = palette) +
+    scale_color_brewer(palette = palette) +
+    theme_minimal()
+}
+
+plot2_streaks(rankings, palette = "Dark2")
+```
+
+What can easily be concluded is that prior 1985 the rankings data was updated much less frequently
+than today. As the black line shows, there were years (in particular 1980-1984), when the rankings
+was updated only twice a season. This casts a doubt on the record streaks as the world number 1 
+player achieved during this period. It is not to say that Jimmy Connors' record 5.43 years streak^[In the presention we gave on Jan 25, 2021, there was a mistake in counting the streaks for the players, resulting in Roger Federer being portrayed as all-time best with respect to time spent as world best player in a row. We had then calculated the streaks backwards (if a player is no. 1 at time *ranking_date<sub>t</sub>*, check if he was a no. 1 at time *ranking_date<sub>t-1</sub>*, if yes, add *ranking_date<sub>t</sub>-ranking_date<sub>t-1</sub>* to a streak), however it should be calculated, as it is now, in a forward fashion, as a player who becomes no. 1 remains no. 1 until the next ranking.]
+should not be trusted, but one has to bear in mind that he needed to defend his leading position
+much less frequently than more recent players', who are in danger of losing their points after 
+every single tournament in which they performed in a previous year. Additionally, the graph 
+reveals that for some players, in particular Lendl and Sampras, although they did not achieve 
+a record streaks, they enjoyed two periods of domination, with a relatively small interuption. 
+But for a couple months breaks, one would be entirely entitled to say that the years 1986-1991 
+were dominated by Lendl. Another interesting fact is that in the last 12 years, with exception 
+of one Djokovic's domination period lasting for over 2 years, there were no particularly long 
+periods of one-player dominance. 
+
+But even the very best players had to start their careers from scratch and climb the rankings. One of the aspects we considered in a quest for finding the best player was to consider how long it took the player to reach rank 1, from the time his first game in the database was recorded. 
+
+```{r r plot_time_r1, message = F, warning = F, fig.height = 5}
+
+plotDaysTakenToReachRank2 <- function(data, ranking = 1,col1="#a3c4dc",col2="#0e668b") {
+  
+  df <- rankings %>% select(player, ranking_date, rank) %>%
+    mutate(player = ifelse(player %in%c("Roger Federer", "Rafael Nadal", "Novak Djokovic", "Andy Murray"),paste0(player, "*"),player)) %>% 
+    mutate(ranking_date = as.Date(ranking_date)) %>%
+    arrange(ranking_date) %>%
+    group_by(player) %>%
+    mutate(first_entry = first(ranking_date)) %>% filter(rank == ranking) %>%
+    group_by(player) %>%
+    filter(ranking_date == min(ranking_date),
+           player %in% c("Bjorn Borg",
+                         "Ivan Lendl",
+                         "Andre Agassi",
+                         "Pete Sampras",
+                         "Roger Federer*",
+                         "Rafael Nadal*",
+                         "Novak Djokovic*")) %>%
+    slice(1) %>% # takes the first occurrence if there is a tie
+    mutate(time_taken = difftime(as.Date(ranking_date), as.Date(first_entry), units = "days")) %>%
+    filter(time_taken>0) %>% 
+    select(!rank) %>%
+    ungroup()
+  
+  df %>% arrange(desc(time_taken)) %>% 
+    ggplot(aes(x=first_entry, xend=ranking_date, y=reorder(player,-time_taken), group=player)) + 
+    geom_dumbbell(color=col1, 
+                  size=2,
+                  colour_xend =col2) + 
+    labs(x="Year", 
+         y=NULL, 
+         title=sprintf("Time taken to reach rank %s", ranking), 
+         subtitle="Counted from first appearance in ranking to the first appearance as rank 1.", 
+         caption="Active players are marked with *") +
+    geom_text(aes(x=first_entry, y=reorder(player,-time_taken), label=first_entry),
+              color=col2, size=3.5, vjust=1.4,) +
+    geom_text(color=col2, size=3.5, vjust=-1,
+              aes(x=ranking_date, y=reorder(player,-time_taken), label=ranking_date))+
+    geom_rect(aes(
+      xmin = as.Date("2018-01-01"),
+      xmax = as.Date("2022-01-01"),
+      ymin = -Inf,
+      ymax = Inf
+    ), fill = "#b4d3e9") +
+    geom_text(
+      aes(
+        label = time_taken,
+        y = reorder(player,-time_taken),
+        x = as.Date("2020-01-01")
+      ),
+      fontface = "bold",
+      size = 3,
+    ) +
+    geom_text(data=filter(df, time_taken== min(time_taken)), 
+              aes(x=as.Date("2020-01-01"), y=reorder(player,-time_taken), label="No. Days"),
+              color="black", size=3.1, vjust=-0.6, fontface="bold")+
+    theme(
+      panel.grid.major=element_blank(),
+      panel.grid.minor=element_blank(),
+      panel.border=element_blank(),
+      axis.ticks=element_blank(),
+      axis.text.x=element_blank(),
+      plot.title=element_text(size = 16, face="bold"),
+      plot.title.position = "plot",
+      plot.subtitle=element_text(face="italic", size=12, margin=margin(b=12)),
+      plot.caption=element_text(size=8, margin=margin(t=12), color="#7a7d7e")
+    ) +
+    theme_minimal()
+  
+}
+
+
+plotDaysTakenToReachRank2(rankings,ranking = 1)
+
+```
+
+Measured in days, Roger Federer climbed the fastest up the rankings, reaching TOP1 just after 1596 days, or slightly less than four and half years. The second fastest was Pete Sampras, for whom it was just a week more. Third is Rafael Nadal with 1946 days. From a commonly known “big-three”, it took Djokovic the longest to become number 1 in men’s tennis. As the chart helps us to set in the timeline, we might see that it might be because of overlapping climbing periods with Rafael Nadal. Findings like this make us aware that we also need to consider other players’ development when assessing a player.
+
+---
+
+Tennis hates a vacuum. Over the years, different players dominated courts. At the very best level, the concentration of wins is very high amongst few players. A good season for one player often means a terrible season for another, who lost the finals to the winner despite his high form and skills. This is why it is essential always to put some perspective when analyzing best performances. 
+
+
+```{r r plot_heatmap, message = F, warning = F, layout = "l-body-outset", fig.height = 6, fig.width = 10}
+
+players <- c("Jimmy Connors",
+             "Bjorn Borg",
+             "Ivan Lendl",
+             "Andre Agassi",
+             "Pete Sampras",
+             "Andy Murray",
+             "Roger Federer",
+             "Rafael Nadal",
+             "Novak Djokovic")
+
+plotWinsByPlayer <- function(data, players) {
+  
+  data %>%
+    filter(winner_name %in% players) %>%
+    mutate(winner_name = ifelse(winner_name %in%c("Roger Federer", "Rafael Nadal", "Novak Djokovic", "Andy Murray"),paste0(winner_name, "*"),winner_name)) %>% 
+    mutate(Year = year(tourney_date)) %>% 
+    group_by(winner_name,Year) %>% 
+    summarise(`Win Count` = n()) %>% 
+    rename(Player = winner_name) %>% 
+    ggplot(aes(x= Year,y= reorder(Player,Year), fill = `Win Count`)) +
+    geom_tile(color = "white", linetype = 1) +
+    scale_fill_viridis() + geom_text(aes(label=`Win Count`), color = "white",fontface = "bold",
+                                     size = 3) +
+    labs(title = "Tournament wins over years ", 
+         x = "Year", y = "Number of tournaments won",
+         caption="Active players are marked with *") +
+    theme(legend.position = c(0.9, 0.35), legend.background = element_rect(fill = "transparent"))+
+    theme_minimal()+
+    guides(fill = NULL) +
+    theme(legend.position = "none",
+          axis.ticks = element_blank())
+  
+}
+
+plotWinsByPlayer(data,players)
+
+```
+
+
+As presented in the plot above, we can see the development of the best player career, their peaks, troughs, and relation to other players, as measured by the number of tournament wins. We can see that it is unusual for any two or more players to have simultaneously their peak season. An excellent example of this is Ivan Lendl, whose best seasons in the 1980s are echoed in a lower number of wins of other great players of this time - Bjorn Borg and Jimmy Connors. Another example of this is Roger Federer’s best performance in 2005 that shadowed Rafael Nadal’s number of tournaments won. Another insight from this chart is the pace of career development. We might see patterns of steady climb, like Andre Agassi, quick rise to prominence like Ivan Lendl, or even sudden falls like Andy Murray’s after 2015. 
+
+
+## The best in tournaments
+
+
+As we have pointed out, rankings allow for comparing players against their rivals, but they
+also have some drawbacks. Looking for the actual tournamets wins has its purpose - not only
+do the wins make up the rankings, but also some deficiencies of rankings, like depending on a
+current methodology of creating the rankings (e.g. once winning a tourney means getting x points,  after the revison of rule - y points, once tournaments counts, the other time not), can be fixed by looking at particualar events. We shall try to help this issue by looking at the "raw wins"  and manually picking what is important. This is what we are up to do in this section.
+
+
+```{r r plot3, layout = "l-body-outset", fig.height = 8, fig.width = 10}
+
+#### Plot 3: Tournaments and career duration ####
+
+plot3_tournaments_and_career <- function(data = data, activePlayers){
+  
+  # Prepare a list of top players by number of tournaments won
+  data %>% 
+    filter(round == "F") %>% 
+    pivot_longer(cols = c(winner_name, loser_name), values_to = "player", names_to = "win") %>%
+    mutate(win = if_else(win=="winner_name", 1, 0)) %>% 
+    group_by(player) %>% 
+    summarise(finalsPlayed = n(), finalsWon = sum(win),
+              finalsWinRatio = sum(win)/n()) %>% 
+    ungroup() %>% 
+    # Consider only those players, who played in at least 20 finals
+    filter(finalsPlayed>19) %>% 
+    slice_max(finalsWon, n = 10) -> wins_to_finals_ratio
+  
+  # Retrieve a list of players with their career duration
+  data %>% 
+    select(tourney_date, winner_name, loser_name) %>% 
+    pivot_longer(cols = c(winner_name, loser_name), values_to = "player", names_to = "win") %>%
+    group_by(player) %>% 
+    summarise(match1st = min(tourney_date),
+              matchLast = max(tourney_date)) %>% 
+    ungroup() %>% 
+    mutate(careerDuration = as.numeric((matchLast-match1st)/365)) -> careersDuration
+  
+  # Prepare a list of tournaments for those best players with distances from the first matches
+  # played by those players
+  data %>%
+    filter(round == "F") %>% 
+    select(tourney_date, tourney_level, player = winner_name) %>% 
+    right_join(careersDuration %>% select(match1st, player), by = "player") %>%
+    right_join(wins_to_finals_ratio %>% select(player), by = "player") %>% 
+    group_by(player) %>% 
+    mutate(sinceBeginnig = as.numeric((tourney_date-match1st)/365)) %>% 
+    ungroup() -> won_tournanemts_list
+  
+  careersDuration %>% 
+    select(player, careerDuration) %>% 
+    right_join(wins_to_finals_ratio, by = c("player")) -> best_in_tournaments
+  
+  best_in_tournaments %<>%
+    mutate(player = lapply(player, FUN = function(x) {if (x %in% activePlayers) paste0(x, "*") else x})) %>% 
+    mutate(player = factor(player, levels = unique(player))) 
+  
+  won_tournanemts_list %<>%
+    mutate(player = lapply(player, FUN = function(x) {if (x %in% activePlayers) paste0(x, "*") else x})) %>% 
+    mutate(player = factor(player, levels = unique(player)))   
+  
+  best_in_tournaments %>%
+    ggplot(aes(x = careerDuration, y = reorder(player, finalsWon))) +
+    geom_bar(stat ="identity", width = 0.75, alpha = 0.15) +
+    geom_point(aes(x = careerDuration+0.01*finalsWon-0.1, size = finalsWon, fill = finalsWinRatio),
+                          shape = 21, color = "white") +
+    scale_size_continuous(range = c(10,20)) +
+    geom_text(aes(x = careerDuration+0.01*finalsWon-0.1, label = finalsWon)) +
+    labs(title = "Players with most tournament wins", subtitle = "vs their careers' duration and ratio of won finals",
+         y = "", x = "Career duration (years)", fill = "ratio of finals won", color = "",
+         caption = "Active players are marked with *.") +
+    theme_minimal() +
+    theme(legend.position = "bottom", legend.key.width = unit(.08, 'npc'),
+          legend.direction = "horizontal", legend.box = "vertical") +
+    guides(size = F, fill = guide_colourbar(title.vjust = 0.9)) +
+    scale_fill_gradient(low = "#e1e2e8", high = "#8c8d91", limits = c(0.6,0.74), breaks = seq(.6,.74,.02),
+                         labels = seq(.6,.74,.02)) +
+    scale_x_continuous(breaks = seq(0,30,2), labels = seq(0,30,2), expand = c(0,.5), limits = c(0,30)) +
+    scale_y_discrete(expand = c(.1,0)) +
+    geom_jitter(data = won_tournanemts_list, aes(x = sinceBeginnig, y = player, color = tourney_level),
+                inherit.aes = F, size = 3, alpha = 0.7, height = .1) 
+}
+
+plot3_tournaments_and_career(data, activePlayers)
+```
+
+What we were up to show with this graphs that the actural numbers of tournaments win for the players who have collected the most of them and the types of wins and their distribution over the career's span. In fact, Jimmy Connors is the player who won the most professional tournaments in the history of tennis - 110. However, his career was exceptionally long and lasted around 28 years (from the first to the last professional match recorded). But even more, interestingly, his wins are concentrated in a period of 18 years, or even 13 years, disregarding three late wins. Therefore, one may say that he was less lastingly dominant than Federer, who has been winning for over 18 years now. From the other viewpoint, gathering a record number of wins in a shorter time may be deemed more impressive - but then other players stand out, in particular Bjorn Borg, who has collected his 64 wins in just eight years.
+
+The other thing that should be pointed out is the contents of the players' wins portfolio. The 
+legacy of Connors, McEnroe, Vilas or Nastase are mostly "other tour-level events" wins. The
+todays "big three",  that is Djokovic, Federer, and Nadal, have much more Grand Slam wins. More on the players' records to particular types of tournaments is discussed later.
+
+For almost all players, an interesting pattern of winning their first non-challenger tournament 
+around two years after playing his first professional match, it is detected. Also, it is visible for some players that their wins are periodic - in particular for Nadal, who specializes in clay tennis, and clay tournaments are organized in late spring. The periods of players’ prime, as well as their injuries may be spotted: for instance, Djokovic's break c. Five years ago, after a period of frequent highest-level wins. For most of the retired great players, we can see a period when they did not enjoy tournament wins anymore despite being active. However, there are some exceptions, particularly Lendl or Sampras, who even won a Grand Slam (US Open 2002) almost by the end of his career. Finally, we may look at the players' achievements conditional on the chances they had and used. In this case, we consider only the finals a player reached^[In the next section, we will consider all tournaments a player took part in during a particular season. Yet another proposition is to take a ratio of one's victories to all calendar events]. It may be seen that, e.g., Federer won the only c eventually. 65% of finals he played are less than Connors and much less than Nadal and Djokovic (both c. 70%). On the one hand, reaching a final is an achievement, and relatively low ratios here indicate that Federer (or Lendl) might have had even greater records, but in general low finals win ratio should not be counted to a player's advantage. It is particularly impressive when a player, such as Sampras (and to an extent also Bjorg, but also had a long period of no wins at all) managed to win much over 70% of finals he competed in.
+
+
+---
+Every professional sport has its more or less important competitions. The most important tennis events are The Grand Slam tournaments/ Four most important annual tennis events that offer the most ranking points, prize money, public, and media attention. The Grand Slam itinerary consists of the Australian Open, the French Open (also known as Roland Garros), Wimbledon, and the US Open in August–September. The Australian and the United States tournaments are played on hard courts,[a] the French on clay, and Wimbledon on the grass. As mentioned during surface analysis, different players historically excelled in different court types.
+
+```{r r plot_chord, message = F, warning = F,layout = "l-body-outset"}
+# Relationship between champions and gran slam tournaments wins
+##
+
+plotGrandSlamWinners <- function(data) {
+  
+  slam_win <-
+    data %>%   filter(tourney_level == "Grand Slam", round == "F") %>% 
+    select(tourney_name, winner_name, loser_name, tourney_date) %>% 
+    mutate(YEAR=year(tourney_date),
+           tourney_name = case_when(
+             tourney_name=="Us Open" ~ "US Open",
+             tourney_name=="Australian Open-2" ~ "Australian Open",
+             TRUE ~ tourney_name
+           )) %>% 
+    rename(WINNER = winner_name,
+           TOURNAMENT = tourney_name,
+    )
+  
+  
+  slam_win_cnt <- slam_win %>% filter(WINNER %in% c("Rafael Nadal","Roger Federer","Novak Djokovic","Pete Sampras","Bjorn Borg","Andre Agassi","Ivan Lendl","Jimmy Connors")
+  )%>% select(TOURNAMENT, WINNER) %>%
+    group_by(WINNER, TOURNAMENT) %>% 
+    summarise(NUM_WINS = n()) %>% 
+    arrange(match(WINNER, c("Rafael Nadal",
+                            "Roger Federer",
+                            "Novak Djokovic",
+                            "Pete Sampras","Bjorn Borg",
+                            "Andre Agassi",
+                            "Ivan Lendl",
+                            "Jimmy Connors")), desc(NUM_WINS)) 
+  
+  grid.col = c(`Roland Garros` = "#B9562F",
+               `US Open` = "#7BADC6",
+               `Wimbledon` = "#769934",
+               `Australian Open` = "#7B9D8D",
+               `Rafael Nadal`="#f8e621",
+               `Roger Federer`="#7bd34f",
+               `Novak Djokovic`="#33b679",
+               `Pete Sampras`="#1f978b",
+               `Bjorn Borg`="#2a788e",
+               `Andre Agassi`="#39568c",
+               `Ivan Lendl`="#472a7a",
+               `Jimmy Connors`="#440d53")
+  
+  
+  chordDiagram(slam_win_cnt,grid.col = grid.col)
+  title("Number of wins in Grand Slam tournaments", cex = 0.6)
+  
+}
+
+plotGrandSlamWinners(data)
+
+```
+
+The chord diagram above presents us eight players with the highest number of Grand Slam tournaments wins. Starting with Rafael Nadal, we can see his dominance on Roland Garros’ clay surface and decent performance on the US Open, and a moderate number of wins on Wimbledon. Second comes Roger Federer, whose single wins in the French Open are compensated by a significant number of wins in the other three tournaments, especially the Wimbledon. Novak Djokovic - third in line, also presents a strong performance on Wimbledon’s grass court and an excellent history of winning the Australian Open. Notable mentions deserve Pete Sampras, who dominated Wimbledon for some time, while also getting one of the best performances on the US Open, as well as and Bjorn Borg, who as one of the few players gave a very stellar performance on both grass of Wimbledon and clay of French Open.
+
+As we examined, some names appear more than others in the list of big tournament winners. To further investigate their performance and see how it differs from a typical pro player, we took a more in-depth look at the relation of age, and the number of Grand Slam matches won. 
+
+```{r r plot_step, message = F, warning = F, fig.height = 5}
+plotGrandSlamWinsAge <- function(data,players=c("Rafael Nadal","Roger Federer","Novak Djokovic","Pete Sampras",'Bjorn Borg')) {
+  
+  DFx = NULL
+  for (player in players) {
+    
+    df <- data %>% filter(tourney_level=="Grand Slam",
+                          winner_name %in% player) %>% 
+      select(winner_name,winner_age) %>% mutate(winner_age = round(winner_age))
+    
+    DF <- df[order(df$winner_age),] #Sort by date
+    DF$wins <- seq(length=nrow(DF)) #Add case numbers (in order, since sorted)
+    
+    DFx <- rbind(DFx,DF)
+    
+  }
+  
+  other_players <- data %>% filter(tourney_level=="Grand Slam",
+                                   !winner_name %in% players, 
+                                   !is.na(winner_age)) %>% 
+    select(winner_name) %>% distinct() %>% as.list() 
+  
+  DFx_all = NULL
+  
+  for (player in other_players$winner_name) {
+    
+    df <- data %>% filter(tourney_level=="Grand Slam",
+                          winner_name %in% player,
+                          !is.na(winner_age)) %>% 
+      select(winner_name,winner_age) %>% mutate(winner_age = round(winner_age))
+    
+    DF <- df[order(df$winner_age),] #Sort by date
+    DF$wins <- seq(length=nrow(DF)) #Add case numbers (in order, since sorted)
+    
+    DFx_all <- rbind(DFx_all,DF)
+  }
+  
+  DFx %>% 
+    ggplot(aes(x=winner_age, y=wins,group=winner_name,label=wins)) + 
+    geom_step(aes(colour=winner_name),size=1.5) +
+    scale_y_continuous(name= "Number of Grand Slam Wins") +
+    scale_x_continuous(name= "Age") +
+    geom_point(data = DFx %>% group_by(winner_name) %>% filter(wins == max(wins)),aes(colour=winner_name),
+               shape=16, size=5) +
+    scale_color_brewer(palette="Dark2") +
+    geom_text_repel(data = DFx %>% group_by(winner_name) %>% filter(wins == max(wins)),aes(colour=winner_name),min.segment.length = Inf, seed = 42, box.padding = 0.7) +
+    geom_step(data = DFx_all,aes(x=winner_age, y=wins,group=winner_name),alpha=0.12,color="#0D4F8B",size=0.85) +
+    ggtitle("Number of Grand Slam matches won at different age") +
+    labs(colour='Player Name') +
+    theme_minimal()
+}
+
+plotGrandSlamWinsAge(data=data)
+
+```
+
+Blended into the background, we see the performance of each player available in our database. Highlighted, we can see outstanding players and how much they differ from the rest of the pack. Looking at this step plot, we might see the pace of winning dependent on player age, how early he started winning Grand Slam titles, and the overall number of wins. Taking an example from Bjorn Borg, we can see that his Grand Slam career started exceptionally early, winning his first match at just 17. His progressive win streak continued till the end of his career at just the age of 26, which amounted to 142 wins 11 Grand Slam titles.Rafael Nadal, Novak Djokovic, and Pete Sampras began their Grand Slam careers at about the same age, while Federer joined the competition a little later. Whereas Pete Sampras ended his career after his 30s, Djokovic and Nadal are still pulling ahead of the game. Still, they lag behind, despite his considerable age as a pro player, the unmatched Roger Federer.
+
+## Best seasons ever
+
+Speaking of opportunities the players had to built their all-time great achievements, it is worth
+acknowledging that they not always mantained consistency throught entire career span. 
+Many times, players had periods of greatness, followed by times of injury or worse disposition. 
+It may be seen very well on a graph above for Nadal and Agassi, and to an extend also for Federer.
+Moreover, in old days of tennis or even today for various reasons, the players may have varying
+chances to travel to distant venues, and compete in all events in the calendar. For this reason
+we will now look not at their entire carrers but only at the specific seasons, and search for
+the best ratio of tournaments they won to tournaments they acturally competed in.
+
+```{r r plot4, message = F, warning = F, fig.height = 5}
+
+#### Plot 4: Best seasons ever - tournaments ####
+
+plot4_best_seasons_tournaments <- function(){
+
+  data %>% 
+    filter(tourney_level %in% c("Grand Slam", "Masters 1000", "Tour finals and other season-ending events")) %>% 
+    select(tourney_date, winner_name, loser_name) %>% 
+    pivot_longer(cols = c(winner_name, loser_name), values_to = "player", names_to = "win") %>% 
+    mutate(win = if_else(win == "winner_name", 1, 0)) %>% 
+    group_by(player, tourney_date) %>% 
+    summarise(win = min(win)) %>% 
+    ungroup() %>% 
+    mutate(tourney_year = year(tourney_date)) %>% 
+    group_by(player, tourney_year) %>% 
+    mutate(tournaments_played = n(), tournaments_win_ratio = mean(win)) %>% 
+    ungroup() %>% 
+    select(-c(tourney_date, win)) %>% 
+    distinct(player,  tourney_year, .keep_all = T) %>% 
+    filter(tournaments_played > 4) %>% 
+    slice_max(tournaments_win_ratio, n = 10) -> tournaments_win_ratio_graph
+  
+  tournaments_win_ratio_graph %>% 
+    ggplot(aes(x = reorder(row.names(.), tournaments_win_ratio), y = tournaments_win_ratio, 
+               fill = tournaments_played)) +
+    geom_col() + 
+    coord_flip() +
+    geom_label(aes(label = paste(round(100*tournaments_win_ratio, 2), "%")), size = 3.2, 
+               colour = "white", 
+               position = position_dodge(width = 1), hjust = 1.1) +
+    scale_x_discrete(labels = rev(paste0(tournaments_win_ratio_graph$player, ' (', tournaments_win_ratio_graph$tourney_year, ')'))) +
+    scale_y_continuous(limits = c(0.5, 0.8), oob = scales::rescale_none, labels = scales::percent) +
+    scale_fill_viridis(trans = "reverse", option = "B", begin = 0.7, end = 0.9) +
+    labs(title = "Top 10 best individual seasons ever", subtitle = "by tournaments win ratio", 
+         x = "", y = "win ratio", fill = "tournaments\nplayed",
+         caption = "Only players that ever reached top 10 are included.\nOnly Grand Slams, Masters and Finals. Minimum of 5 tournaments played.") +
+    theme(legend.position = c(0.9, 0.35), legend.background = element_rect(fill = "transparent"),
+          panel.background= element_rect(fill = "white"), panel.grid = element_line(color = "grey85"),
+          legend.key.width= unit(1, 'cm')) +
+    guides(fill = guide_colorbar(reverse = T))
+}
+
+plot4_best_seasons_tournaments()
+```
+
+It is worth noting that as we are looking for the best of the best seasons in the tennis history,
+we must have limited the query to the most prestigious tournaments, and we also do not take into 
+account seasons in which a player competed in less than 4 tournaments. By these criteria, Lendl's
+1986 season happens to be the single best in the history, with a 75% of wins in the most prestigious 
+tournaments (6 out of 8)^[We have to admit that there was a mistake in our presentation from January 25, 2020, concerning this graph and the graph for best individual seasons by matches win ratio. The labels for seasons (players' names and years) were then unfortunately presented in reversed order.],
+Roland Garros, Wimbledon and US Open among them^[Winning 4 Grand Slam tournaments in one year is considererd the holy grail in tennis. In the modern era in tennis, since 1968, it has been acomplished only once, in 1969 by Rod Laver. Sadly, Laver begun his carrer in the early 1960s, so we do not have full record of his achivements (and those prior 1968 are not directly comparable to the later ones, due to major changes in tournaments' regulations).].
+Though Lendl is clearly ahead of the field, Djokovic's 2015 season must also be acknowledged as
+on the best ever, as he then competed in 13 most prestigious tournaments, and was victorius in
+9 of them^[In 2015 Djokovic won 3 of 4 Grand Slam tournaments, 6 of 9 ATP Masters 1000 and the ATP Finals. Winning Australian Open and Roland Garros the next year, he became the only (except from Rod Laver) tennis player in the open era who complated a non-calendar Grand Slam, that is 4 Grand Slam tournaments wins in a row, but not necassarily during one season.].
+What must also not be overlooked is that some players, notably Djokovic and Federer, although
+failed to set a record in the tournaments win ratio during a season, had more than 1 season 
+qualifying to the all-time best list: Djokovic 2 (2015 and 2011), and Federer 4 (2006, 2004,
+2017 and 2005).
+
+
+Another aspect of career development worth considering is the performance across best seasons, measured by the total number of wins. 
+
+```{r r plot_bump, message = F, warning = F,layout = "l-body-outset", fig.width = 8,fig.height= 4}
+
+plotNumberWinsTop5Seasons <- function(data) {
+  
+  df <- data %>% mutate(year=year(tourney_date)) %>%
+     mutate(winner_name = ifelse(winner_name %in%c("Roger Federer", "Rafael Nadal", "Novak Djokovic", "Andy Murray"),paste0(winner_name, "*"),winner_name)) %>% 
+    select(winner_name,year) %>% 
+    group_by(year,winner_name) %>% 
+    summarise(count=n()) %>% ungroup()
+  
+  
+  df_10 <- df %>% group_by(winner_name) %>% 
+    summarise(c_total = sum(count)) %>% 
+    arrange(desc(c_total)) %>% head(10)
+  
+  df <- df %>% filter(winner_name %in% as.list(df_10$winner_name))
+  
+  df_chart <- df %>% ungroup() %>% group_by(winner_name) %>% 
+    arrange(desc(count)) %>% 
+    slice(1:5)
+  
+  df_chart$year <- rep(1:5,times=10)
+  
+  
+  
+  ggplot(df_chart, aes(year, count, color = winner_name)) +
+    geom_point(size = 5) +
+    geom_text(data = df_chart %>% filter(year == min(year)),
+              aes(x = year - .1, label = winner_name), size = 3.5, hjust = 1) +
+    geom_bump(aes(smooth = 6), size = 1.5) +
+    scale_y_continuous(limits = c(50, 140),
+                       breaks = seq(50, 140, 10)) +
+    scale_x_continuous(limits = c(0.5, 5.5),
+                       breaks = seq(1, 5, 1)) +
+    scale_color_manual(values = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02" ,"#A6761D" ,"#666666","#A6CEE3","#1F78B4")) +
+    labs(y = "Number of wins",
+         x = "",
+         title = "Number of wins across best 5 years in career",
+         caption="Active players are marked with *") +
+    theme_minimal()+
+    guides(fill = NULL) +
+    theme(legend.position = "none",
+      axis.ticks = element_blank()) 
+}
+
+plotNumberWinsTop5Seasons(data)
+
+```
+
+As presented on the graph, we are considering top10 players in terms of the highest number of wins in their very best season. This geom bump lot helps us investigate further the pace of career development. In the left upper right-hand side corner of the plot, we see Guillermo Vilas, whose one season dominance was followed by a sharp decline in his other best seasons. It puts it in stark contrast with Jimmy Connors, who had nowhere near Villas in his prime season and scored more wins over his career through strong performance across all his best five seasons. Player Ilie Nastase presents an interesting pattern, with a nearly equally strong performance during his two best seasons followed by a substantial decline in his third.
+
+
+## Best in matches
+
+Temporal falls in form may happen to every great player, therefore comparing best seasons for
+our players has its purpose. However, from the best players, consistency is also expected.
+Therefore, it is important to see their overall performance, and we shall do it on a more fine-grained level than before - comparing the best players' overall ratios of matches wins.
+
+
+```{r r plot5, fig.height = 5}
+
+#### Plot 5: Best in matches - overall ####
+
+plot5_best_in_matches <- function(){
+  
+  matches_won <- data %>% 
+    count(winner_name) %>% 
+    rename(player = winner_name, n_won = n)
+  
+  matches_lost <- data %>% 
+    count(loser_name) %>% 
+    rename(player = loser_name, n_lost = n)
+  
+  matches_win_ratio <- matches_won %>% 
+    left_join(matches_lost, by = "player") %>%
+    # We consider only those players, who competed in at least 50 professional matches
+    filter(n_won+n_lost>49) %>% 
+    mutate(n = n_won+n_lost, freq_won = n_won/(n_won+n_lost)) %>% 
+    slice_max(freq_won, n = 10) %>% 
+    mutate(player = lapply(player, FUN = function(x) {if (x %in% activePlayers) paste0(x, "*") else if (x=="Rod Laver") paste0(x, "**") else x})) %>% 
+    mutate(player = factor(player, levels = unique(player)))
+  
+  matches_win_ratio %>% 
+    ggplot(aes(x = reorder(player, freq_won), y = freq_won, fill = n)) +
+    geom_col() + 
+    coord_flip() +
+    geom_label(aes(label = paste(round(100*freq_won, 2), "%")), size = 3.2, colour = "white", 
+               position = position_dodge(width = 1), hjust = 1.1) +
+    scale_y_continuous(limits = c(0.75, 0.84), oob = scales::rescale_none, labels = scales::percent) +
+    scale_fill_continuous(trans = "reverse", limits = c(1600, 600), breaks = seq(1600,600,-200),
+                          labels = seq(1600,600,-200)) +
+    labs(title = "Top 10 players by total matches win ratio", 
+         subtitle = "only players who competed in at least 50 professional matches",
+         caption = "Active players are marked with *.\n** Our data reaches back to 1968, when Rod Laver was already an active player,\nso we have only partial data for this player.",
+         x = "", y = "win ratio", fill = "matches\nplayed") +
+    theme(legend.position = c(0.9, 0.4), legend.background = element_rect(fill = "transparent"),
+          panel.background = element_rect(fill = "white"), panel.grid = element_line(color = "grey85"),
+          legend.key.width = unit(1, 'cm'), legend.key.size = unit(1, 'cm')) +
+    guides(fill = guide_colorbar(reverse = T))
+  
+}
+
+plot5_best_in_matches()
+```
+
+Several interesting points may be made about the statistic of lifetime matches wins to matches 
+played ratio. The todays "big three,” Djokovic, Nadal, and Federer, clearly lead in the field, Djokovic and Nadal having even a pretty significant advantage over Federer. Nonetheless,
+one should remember that the big three are still active players, and, as was shown on the 3rd plot, usually at the end of careers, players enjoy relatively fewer victories (in tournaments, but
+inevitably also in matches). Therefore, we may expect Nadal's and Djokovic's numbers to fall, but only if they have already reached their ceiling - and this is, of course, hard to estimate. Although Nadal and Djokovic (and, occasionally, Federer) still play, their number of performances has already matched or exceeded the numbers for the older great players, so their impressive results are up to the current moment of their careers should, of course, not be denied.
+
+Finally, it is worth noting that the set of players listed here is not very different from the list of the best players with respect to rankings statistics and tournament achievement. On the one hand, it is not surprising, as rankings are built on match wins. However, it could also be so that some players competed for more than others (more frequently, or for a longer period, like Connors and Federer) and built a significant portfolio of trophies. At least for the very best old-time players like Borg, Connors, Lendl, McEnroe, and Sampras, it is not valid, as they are also on the all-time best list of wins ratios.
+
+
+To be considered one of the best players, one needs to perform well both in Grand Slam and non-Grand Slam tournaments. Drilled down and, calculated ratios of matches won and investigated the relationship between them using linear regression.
+
+```{r r plot_ratios, message = F, warning = F,fig.height = 5}
+### Win Rate at Grand Slams vs. Win Rate at non - Grand Slams 
+
+plotWinRateTournamentLevel <- function(data,players=c("Rafael Nadal",
+                                                      "Roger Federer",
+                                                      "Novak Djokovic",
+                                                      "Pete Sampras",
+                                                      'Bjorn Borg',
+                                                      'Jose Luis Clerc',
+                                                      'Dennis Ralston')) {
+  
+  df <- data %>% select(tourney_level,winner_name,loser_name)
+  
+  df_win <- df %>% mutate(tourney_level = ifelse(tourney_level=="Grand Slam","Grand Slam","non-Grand Slam")) %>% 
+    group_by(tourney_level,winner_name) %>% summarise(win_count = n())
+  
+  df_lose <- df %>% mutate(tourney_level = ifelse(tourney_level=="Grand Slam","Grand Slam","non-Grand Slam"))%>% 
+    group_by(tourney_level,loser_name) %>% summarise(lose_count = n())
+  
+  df_wl <- left_join(df_win,df_lose, by=c("winner_name"="loser_name","tourney_level"="tourney_level")) %>% rename(name=winner_name)
+  
+  df_wl <- df_wl %>% mutate(matches = win_count+lose_count,
+                            win_ratio =round(win_count/(win_count+lose_count),2)) %>% filter(matches > 30)
+  
+  
+  df_chart <- df_wl %>% select(tourney_level,name,win_ratio) %>% spread(tourney_level,win_ratio) %>% filter(!is.na(`Grand Slam`))
+  
+  
+  df_chart %>% 
+    ggplot(aes(x=`non-Grand Slam`, y=`Grand Slam`)) +
+    geom_point(shape = 19,size = 3,alpha = 0.9,color="lightblue") +
+    geom_smooth(method=lm , color="red", se=FALSE) +
+    scale_x_continuous(breaks = seq(0, 1, 0.10)) +
+    scale_y_continuous(breaks = seq(0, 1, 0.10)) +
+    geom_label_repel(data=df_chart %>% filter(name %in% players),aes(label = name),
+                     box.padding   = 0.3, 
+                     point.padding = 0.5,
+                     segment.color = 'grey50') +
+    ggtitle("Match win rate by tournamenet level") +
+    labs(x = "Win rate in non-Grand Slam matches", y = "Win rate in Grand Slam matches") +
+    theme_minimal() 
+  
+}
+
+plotWinRateTournamentLevel(data)
+
+```
+
+The same names that dominated previous charts score very high in both ratios. Players like Bjorg and Nadal performed exceptionally well in Grand - Slam matches, with ratios close to 90%. Novak Djokovic takes the lead in non-Grand Slam with a ratio of win of 82%. Roger Federer is also very high, with both ratios more similar to each other, whereas Pete Sampras is more oriented towards winning Grand Slam matches. Notable mentions deserve players who perform significantly better in one of the categories, like Dennis Ralston in Grand Slam matches and Jose Luis Clerc in non-Grand Slam matches.
+
+## Best players comparisons: head-to-head
+
+After what has been said, one may actually be tempted to ask a straighforward question: so, how
+does the greatest players of all time directly compare to each other? A different way to answer
+this question than finding out various statistics of their carrers, would be to inspect their
+mutual confrontations. Isn't it the case, that if one player has played the other many times,
+at various points of their carrers, in various conditions and circumstances, and was usually
+winning, then he can be named a better player?
+
+```{r r plot6, layout = "l-screen-inset", fig.height = 6.5, fig.width = 10}
+
+#### Plot 6: Best players' head-2-head matrix ####
+
+plot6_h2h_matrix <- function(){
+  
+  top1players <- rankings %>% 
+    filter(rank==1) %>% 
+    distinct(player) %>% 
+    pull()
+  
+  data_for_wins <- data %>% 
+    select(player = winner_name, rival = loser_name) %>% 
+    filter(player %in% top1players, rival %in% top1players) %>% 
+    group_by(player, rival) %>% 
+    summarise(times_won = n()) %>% 
+    ungroup()
+  
+  data_for_loses <- data %>% 
+    select(player = winner_name, rival = loser_name) %>% 
+    filter(player %in% top1players, rival %in% top1players) %>% 
+    group_by(player, rival) %>% 
+    summarise(times_won_2 = n()) %>% 
+    ungroup()
+  
+  players_mutual <- data_for_wins %>% 
+    left_join(data_for_loses, by = c("player" = "rival", "rival" = "player")) %>% 
+    rename(times_lost = times_won_2) %>% 
+    replace_na(list(times_lost = 0)) %>% 
+    mutate(times_played = times_won+times_lost, win_ratio = times_won/(times_won+times_lost))
+  
+  averages <- players_mutual %>% 
+    group_by(player) %>% 
+    summarise(win_ratio = mean(win_ratio)) %>%
+    ungroup() %>% 
+    mutate(rival = "AVG", .after = "player") 
+  
+  players_mutual %>% 
+    select(player, rival, win_ratio) %>% 
+    complete(player, rival) %>% 
+    rbind(averages) %>% 
+    group_by(player) %>% 
+    mutate(ordering = rleid(rival)) %>% 
+    mutate(ordering = ifelse(rival=="AVG", Inf, ordering)) %>% 
+    ungroup() %>% 
+    ggplot(aes(x = reorder(rival, ordering), y = reorder(player, desc(player)), fill = win_ratio)) +
+    geom_tile() +
+    geom_text(aes(label = ifelse(is.na(win_ratio),"-", paste0(100*round(win_ratio, 2), "%"))), 
+              size = 3) +
+    labs(title = "Head-2-head win ratios for the all-time-best players", 
+         subtitle = "only players who ever reached top 1 are included",  x = "", y = "", fill = "win\nratio",
+         caption = "That table should be read rowwise, e.g. 44% in the row for Sampras and the column for Hewitt means that Sampras won 44% matches with Hewitt.") +
+    scale_fill_gradient2(low = "red", mid = "white", high = "#423cc7", midpoint = .5, limits = c(0,1),
+                         na.value = "#ebf0ed") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+          legend.background = element_rect(fill = "transparent"),
+          panel.background = element_rect(fill = "white"), panel.grid = element_line(color = "grey85"),
+          legend.key.height = unit(.15, 'npc'))
+}
+
+plot6_h2h_matrix()  # the chart should be best displayed/saved in proportion c. 1000x650
+```
+
+There is no single player who dominated every top player he played with, however there are 3
+players who stand out: Rafael Nadal, who has the highest average win ratio agains top 3 players
+he played (77%) and the highest worse win ratio: 46% agains Nikolay Davydenko (in 11 matches).
+However, his secord case of win ratio under 50% (more loses than wins) is agains Novak Djokovic,
+who has the 2nd highest worse win ratio, 44%, and for whom there was only 1 player who beated 
+him more often than was beaten by Djokovic - Andy Roddick (5 win out of 9 matches played). 
+Thus said Novak the closest to being unbetable, with 1 exception - of Bjorn Borg. Borg in turn 
+has 3rd highest overall average win ratio against his opponents (71.1%), and also has only 1 
+oppenent with whom he was more often losing than winning - John Newcombe (1 win of Borg out of 
+4 matches). As in the case of Roddick and Djokovic, Borg is much younger than Newcombe, and met
+him at the beginning of his carrer. All the opponnents he played later on, he has beaten in 
+head-to-head.
+
+Roger Federer must be mentioned as having the second highest average win ratio agains best rivals
+(73.4%), however Federer has also quite a few rivals, with who he was on average more often losing
+than winning (7) - not only players older than him, whom he might havemet at the begging of a
+carrer (like Gustavo Kuerten, Yevgeny Kafelnikov and Alex Corretja) and played a few times, but
+also currently active players like Dominic Thiem and Alexander Zverev, and probably most importantly, his greatest
+rivals - Rafael Nadal (42%) and Novak Djokovic (45%).
+
+All in all, for every reat player there always is another, with whom he has trouble winning. That
+is not say, that mutual statistics do not distinguish any players over the others.
+
+## Surface Dominance
+
+Tennis is one of the unique sports in which players must master the technique of playing on several significantly different surfaces - clay, grass, carpet, and hard surfaces. Each of them has various advantages and disadvantages about match play and maintenance. Clay tennis courts favor players who can play defense. The bounce of a tennis ball is also higher and slower than that of a hard tennis court. Grass tennis courts are the fastest type of courts. Bounces tend to be fast and low, rallies are short, and the service plays a more significant role than other surfaces. When it comes to hard courts, play is generally faster because there is little energy absorption. Players can apply many types of spins during play, and the ball tends to bounce high. Carpet is typically the fastest surface, faster than a hardcourt, with low bounce. Although high-profile tournaments like the ATP tour were commonly played on a carpet in the past, they saw a decline in modern tennis. The main reason for it is that games carried out on this surface, with their great pace, are not as much interesting for the audience and. Also, due to its characteristics, the carpet surface created more opportunities for injuries.
+
+
+```{r r plot_surface, message = F, warning = F, fig.height = 5}
+
+plotWinnersBySurface <- function(data, SurfaceName,fillColorName) {
+  
+  p1 <- data %>%
+    rename(Winner = winner_name,Surface=surface) %>% 
+    filter(Surface == SurfaceName) %>%
+    group_by(Winner) %>%
+    summarise(Count = n()) %>%
+    arrange(desc(Count)) %>%
+    ungroup() %>%
+    mutate(Winner = reorder(Winner,Count)) %>%
+    head(10) %>% 
+    
+    ggplot(aes(x = Winner,y = Count)) +
+    geom_bar(stat='identity',colour="white", fill = fillColorName,alpha=0.8) +
+    geom_text(aes(x = Winner, y = 1, label = paste0("(",Count,")",sep="")),
+              hjust=0, vjust=.5, size = 4, colour = 'black',
+              fontface = 'bold') +
+    labs(x = 'Winner', 
+         y = 'Count',
+         title = paste('Most',SurfaceName,'Surface Wins ')) +
+    coord_flip() +
+    theme_minimal()
+  
+  return(p1)
+}
+
+fillColor = "#B9562F"
+fillColor2 = "#7BADC6"
+fillColor3 = "#769934"
+fillColor4 = "#7B9D8D"
+
+p1 <- plotWinnersBySurface(data,"Clay",fillColor)
+p2 <- plotWinnersBySurface(data,"Hard",fillColor2)
+p3 <- plotWinnersBySurface(data,"Grass",fillColor3)
+p4 <- plotWinnersBySurface(data,"Carpet",fillColor4)
+
+library(cowplot)
+p <- plot_grid(p1,p2,p3,p4, ncol = 2, 
+          align = 'v', axis = 'l')# aligning vertically along the left axis
+
+title <- ggdraw() + draw_label("Most total wins by surface type", fontface='bold')
+
+plot_grid(title, p, ncol=1, rel_heights=c(0.05, 0.5))
+```
+
+Starting with clay, Guillermo Villas takes first place with 667 overall wins. Although many wins, he had a comparably poor record at the French Open, with just the single triumph in 1977, although he did reach the final four times. A similar story can be told about the second place - Manuel Orantes. Although he has won the second most clay-court matches in history (560), he never won the French Open - the most important tournament played on clay. The undisputed greatest clay-court player of all time is Rafael Nadal, who won an incredible 54 clay-court titles, including 10 French Opens and 11 Monte Carlo Masters trophies, through his 449 wins at the third place.
+	
+The hard surface is the most balanced between modern surfaces. In its top 10, we can find all of the so-called “big-four” players: Federer, Nadal, Djokovic, and Murray.
+Roger Federer has a greater claim than anyone else of being the best hard-court player of all time. A runner up for his place is Novak Djokovic with his 612 wins. Andre Agassi, another tennis great who played the game a long time in the third position, retiring from tennis at age 36. 
+
+As for the grass, Roger Federer is also considered the greatest player on this surface. Federer produced a run of dominance at Wimbledon - the most important grass tournament, from 2003 through 2009. In second place is Jimmy Connors with 174 wins, who in a way was a Federed of his time. Although Pete Sampras did not make it to the top 10 of total wins on grass, he deserves a notable mention for his seven Wimbledon titles. Through these achievements, he is also considered one of the most significant grass players of all time.
+
+On the carpet surface - somewhat a relic of the past, we might see great players from previous decades. John McEnroe and Jimmy Connors tie for the first place, but due to more significant titles won, John McEnroe is considered the all-time king of carpet courts.
+
+Taking it all together, we can see that each surface has its series of legends. A notable finding is that a player should not be only assessed through his number of wins alone, as different matches are for other stakes. We notice some patterns, with individual players appearing across different rankings like Federer, Djokovic, Nadal, and players from the past like Connors. 
+
+
+## Most domianant and best under pressure: a more detailed look
+
+Although we are here most concerned with finding out which player has been overall the best
+in tennis history, this can not be accomplished without stepping at a more detailed level, and
+looking at some of the components of tennis craft. We have tried to choose those elements that represent crucial factors that must characterize great, complete players. For instance, a mastery in serve is undoubtedly essential. Yet, it is not a good measure of dominance if the serves do not translate into a solid advantage in winning service points and sets. Similarly, a ratio of second serves won may be seen as a good indicator of confidence. Yet, it is conditional on losing first serves, which would not be called a quality of the best players. In the following two graphs, we will look at one measure of dominance and one measure of confidence under pressure and present the all-time best players concerning these qualities.
+
+
+```{r r plot7_8, layout = "l-body-outset", fig.height = 5.5, fig.width = 12}
+
+#### Plot 7: Best in tie-breaks (podium plot) ####
+
+plot7_tie_breaks_win_ratio <- function(data_extra){
+  
+  my_theme <- ttheme_default(core = list(
+    bg_params = list(fill = c(c("#edd207", "#dbd8bf", "#cc9d04"), 
+                              rep(c("white", "#e8e9ed"), 10), "navyblue"))))
+  
+  tie_breaks_data <- data_extra %>% 
+    select(winner_name, loser_name, w_tbWon, l_tbWon) %>% 
+    pivot_longer(cols = c(winner_name, loser_name), values_to = "player", names_to = "win") %>% 
+    mutate(tbWon = if_else(win == "winner_name", w_tbWon, l_tbWon),
+           tbLost = if_else(win == "winner_name", l_tbWon, w_tbWon),
+           w_tbWon = NULL, l_tbWon = NULL) %>%
+    group_by(player) %>%
+    summarise(tbWon = sum(tbWon), tbLost = sum(tbLost),
+              tbWinRatio = sum(tbWon)/(sum(tbWon)+sum(tbLost))) %>% 
+    ungroup() %>% 
+    filter(tbWon+tbLost>29) %>% 
+    slice_max(tbWinRatio, n = 3) %>% 
+    mutate(place = rleid(tbWinRatio)) %>% 
+    arrange(tbWinRatio = c(2,1,3))
+  
+  tie_breaks_podium <- data.frame(x = as.factor(c(1,2,3)), y = c(3,4,2)) %>% 
+    ggplot(aes(x = x, y = y, fill = as.character(x))) +
+    geom_col(show.legend = F) +
+    geom_point(aes(y = y-1, color = as.character(x)), size = 15, show.legend = F) +
+    geom_point(aes(y = 2+c(2.4,3.9,0.8)*tie_breaks_data$tbWinRatio,
+                   size = tie_breaks_data$tbWinRatio, color = as.character(x)),
+               show.legend = F) +
+    geom_text(aes(y = 2+c(2.4,3.9,0.8)*tie_breaks_data$tbWinRatio,
+                  label = paste0(100*round(tie_breaks_data$tbWinRatio,2),"%")),
+              size = 6, vjust = .4) +
+    geom_text(aes(y = y-1, label = tie_breaks_data$place), vjust = .4, size = 8) +
+    labs(x = "", y = "", title = "All-time best players by tie-breaks win ratio",
+         subtitle = "(Only players who played at least 30 tie-breaks are taken into account)") +
+    scale_y_continuous(limits = c(0,6)) +
+    scale_x_discrete(labels = tie_breaks_data$player) +
+    scale_size_continuous(range = c(25,30)) +
+    scale_fill_manual(values = c("1" = "#dbd8bf", "2" = "#edd207", "3" = "#cc9d04")) +
+    scale_color_manual(values = c("1" = "#c4c2af", "2" = "#dbc204", "3" = "#ba9006")) +
+    theme(axis.text.y = element_blank(), legend.background = element_rect(fill = "transparent"),
+          panel.background = element_rect(fill = "white"), panel.grid = element_line(color = "white"),
+          axis.ticks = element_blank())
+  
+  tie_breaks_table <- data_extra %>% 
+    select(winner_name, loser_name, w_tbWon, l_tbWon) %>% 
+    pivot_longer(cols = c(winner_name, loser_name), values_to = "player", names_to = "win") %>% 
+    mutate(tbWon = if_else(win == "winner_name", w_tbWon, l_tbWon),
+           tbLost = if_else(win == "winner_name", l_tbWon, w_tbWon),
+           w_tbWon = NULL, l_tbWon = NULL) %>%
+    group_by(player) %>%
+    summarise(tbWon = sum(tbWon), tbLost = sum(tbLost),
+              tbWinRatio = sum(tbWon)/(sum(tbWon)+sum(tbLost))) %>% 
+    ungroup() %>% 
+    filter(tbWon+tbLost>29) %>% 
+    slice_max(tbWinRatio, n = 10) %>% 
+    mutate(` ` = rleid(tbWinRatio),
+           tbWinRatio = round(tbWinRatio, 2),
+           tbPlayed = tbWon+tbLost) %>% 
+    relocate(` `, .before = "player") %>% 
+    relocate(tbPlayed, .after = "player") %>% 
+    rename(`tie-breaks played` = tbPlayed, `ratio of tie-breaks won` = tbWinRatio) %>% 
+    select(-c(tbWon, tbLost)) %>% 
+    tableGrob(rows = NULL, theme = my_theme)
+  
+  grid.arrange(tie_breaks_podium, tie_breaks_table, nrow = 1)
+  
+}
+
+plot7_tie_breaks_win_ratio(data_extra)  # the chart should be displayed/saved in proportion c. 1000x423
+
+#### Plot 8: Matches won to 0 sets (podium plot) ####
+
+plot8_matches_won_to_0 <- function(data_extra){
+  
+  my_theme <- ttheme_default(core = list(
+    bg_params = list(fill = c(c("#edd207", "#dbd8bf", "#cc9d04"), 
+                              rep(c("white", "#e8e9ed"), 10), "navyblue"))))
+  
+  matches_to_0_data <- data_extra %>% 
+    filter(tourney_level %in% c("Grand Slam", "Masters 1000", "Tour finals and other season-ending events")) %>%  
+    select(player = winner_name, l_SetsWon) %>% 
+    group_by(player) %>%
+    summarise(winsToZeroSetsRatio = sum(l_SetsWon==0)/n(),
+              wins = n()) %>% 
+    ungroup() %>% 
+    filter(wins>99) %>% 
+    slice_max(winsToZeroSetsRatio, n = 3) %>% 
+    mutate(place = rleid(winsToZeroSetsRatio)) %>% 
+    arrange(winsToZeroSetsRatio = c(2,1,3))
+  
+  matches_to_0_podium <- data.frame(x = as.factor(c(1,2,3)), y = c(3,4,2)) %>% 
+    ggplot(aes(x = x, y = y, fill = as.character(x))) +
+    geom_col(show.legend = F) +
+    geom_point(aes(y = y-1, color = as.character(x)), size = 15, show.legend = F) +
+    geom_point(aes(y = 2+c(2.3,3.6,0.8)*matches_to_0_data$winsToZeroSetsRatio,
+                   size = matches_to_0_data$winsToZeroSetsRatio, color = as.character(x)),
+               show.legend = F) + 
+    geom_text(aes(y = 2+c(2.3,3.6,0.8)*matches_to_0_data$winsToZeroSetsRatio,
+                  label = paste0(100*round(matches_to_0_data$winsToZeroSetsRatio,2),"%")),
+              size = 6, vjust = .4) +
+    geom_text(aes(y = y-1, label = matches_to_0_data$place), vjust = .4, size = 8) +
+    labs(x = "", y = "", title = "All-time best players by ratio of matches won to 0 sets",
+         subtitle = "Number of matches won to 0 set to the number of wins.\nOnly players who won at least 100 professional matches\nand only the most prestigious tournaments - as for the 'best seasons ever' graph.") +
+    scale_y_continuous(limits = c(0,6)) +
+    scale_x_discrete(labels = matches_to_0_data$player) +
+    scale_size_continuous(range = c(25,30)) +
+    scale_fill_manual(values = c("1" = "#dbd8bf", "2" = "#edd207", "3" = "#cc9d04")) +
+    scale_color_manual(values = c("1" = "#c4c2af", "2" = "#dbc204", "3" = "#ba9006")) +
+    theme(axis.text.y = element_blank(), legend.background = element_rect(fill = "transparent"),
+          panel.background = element_rect(fill = "white"), panel.grid = element_line(color = "white"),
+          axis.ticks = element_blank())
+  
+  matches_to_0_table <- data_extra %>%
+    filter(tourney_level %in% c("Grand Slam", "Masters 1000", "Tour finals and other season-ending events")) %>%  
+    select(player = winner_name, l_SetsWon) %>% 
+    group_by(player) %>%
+    summarise(winsToZeroSetsRatio = sum(l_SetsWon==0)/n(),
+              wins = n()) %>% 
+    ungroup() %>% 
+    filter(wins>99) %>% 
+    slice_max(winsToZeroSetsRatio, n = 10) %>% 
+    mutate(` ` = rleid(winsToZeroSetsRatio),
+           winsToZeroSetsRatio = round(winsToZeroSetsRatio, 2)) %>% 
+    relocate(` `, .before = "player") %>% 
+    relocate(wins, .after = "player") %>% 
+    rename(`matches won` = wins, `ratio of matches won to 0 sets` = winsToZeroSetsRatio) %>% 
+    tableGrob(rows = NULL, theme = my_theme)
+  
+  grid.arrange(matches_to_0_podium, matches_to_0_table, nrow = 1)
+  
+}
+
+plot8_matches_won_to_0(data_extra)  # the chart should be displayed/saved in proportion c. 1050x423
+```
+
+Interestingly, in both aspects, some players that occupy the top 10 places for the best in the ratio of matches won to 0 sets, and the best ratio of tie-breaks wins are not the from the shortlist all-time have seen before. It would look differently if we set higher thresholds for the number of appearances, but the point is not to deny some players access to the elite group but to filter out cases in which a player did not contribute much to sports' history, playing mostly in low-rank tournaments or playing for a too short period. Of course, setting a threshold is always a bit arbitrary, and in the case of tie-breaks, one must consider that in the old-day of the game (prior c. 1990), tie-breaks were played much less frequently than they are played today.
+
+As far as tie-breaks records are concerned, Connors, who may be considered the best in tie-breaks, played them over 18 times fewer than Federer. What is striking is that the ratio of tie-breaks won by Federer (2nd place) and Djokovic (3rd place) is almost identical, despite vast numbers of times they took part in tie-breaks, and also significant differences between them  (Federer's 698 tie-breaks vs. Djokovic's 397). Some all-time greats also feature in the list for best tie-breaks players, notably Sampras and Roddick. However, there are also relatively unknown players (Mauricio Hadad, active in the 1990s, highest-ranking 78), and currently active, young players (Felix Auger-Aliassime, born 1998, highest ranking 17).
+
+Our statistics for the most dominant players, that is, the ones who most frequently beat their rivals to 0 in sets, also reveals interesting findings. In this category of dominance Nadal and Federer set aside the rest of the field, both in terms of the ratio of such wins and absolute numbers of matches. They proved their superiority.
+
+
+## Summary
+
+Tennis is a beautiful game with a long tradition and generations of players who have delighted the public with their skills and style of play. Analyzing tennis data is a hard task, due to the complexity of data and the constant evolution of the game itself. In our project, we wanted to discover who is the greatest player of all time. Unfortunately, a clear answer to this question does not exist. Each generation of players was governed by its own laws, had its own strengths and weaknesses, and had its own plethora of stars who competed with each other. However, during our analysis, a few names came up more often than others. Namely, members of the big three, Federer, Nadal, Djokovic, and prominent names from the past like Borg, Connors, Lendl, McEnroe, and Sampras. To compare them one to one, we have to wait until the current stars have finished their careers, but by then there are sure to be new stars who can outshine the current champions. Therefore, there is nothing left for us to do but cheer for the athletes, enjoy the game and remember the legends of the past.
